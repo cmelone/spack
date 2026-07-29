@@ -55,6 +55,38 @@ def test_rewire_db(mock_fetch, temporary_store: Store, install_mockery, transiti
     check_spliced_spec_prefixes(spliced_spec)
 
 
+@pytest.mark.parametrize("transitive", [True, False])
+def test_rewire_db_external_replacement(
+    mock_fetch, temporary_store: Store, install_mockery, transitive
+):
+    """Reproducer for https://github.com/spack/spack/issues/50560: when the spliced-in
+    replacement is an external, relocate_package must still rewrite prefixes in text files
+    that refer to the pre-splice, non-external build_spec node."""
+    spec = spack.concretize.concretize_one("splice-t^splice-h~foo")
+    dep = spack.concretize.concretize_one("splice-h+foo")
+    PackageInstaller([spec.package, dep.package], explicit=True).install()
+
+    # Simulate an externally-installed replacement: same on-disk prefix/contents, but
+    # marked external, as would be the case for a real system-installed dependency.
+    dep.external_path = str(dep.prefix)
+
+    spliced_spec = spec.splice(dep, transitive=transitive)
+    assert spec.dag_hash() != spliced_spec.dag_hash()
+
+    spack.rewiring.rewire(spliced_spec)
+
+    # check that the prefix exists
+    assert os.path.exists(spliced_spec.prefix)
+
+    # test that it made it into the database
+    rec = temporary_store.db.get_record(spliced_spec)
+    installed_in_db = rec.installed if rec else False
+    assert installed_in_db
+
+    # check for correct prefix paths
+    check_spliced_spec_prefixes(spliced_spec)
+
+
 @pytest.mark.requires_executables(*required_executables)
 @pytest.mark.parametrize("transitive", [True, False])
 def test_rewire_bin(mock_fetch, temporary_store: Store, install_mockery, transitive):
